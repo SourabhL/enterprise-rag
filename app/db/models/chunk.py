@@ -6,8 +6,14 @@ from sqlalchemy import DateTime, ForeignKey, Integer, Text, UniqueConstraint, fu
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.config import get_settings
 from app.db.base import Base
+
+# Must match EMBEDDING_DIMENSIONS in migrations/versions/0002_pgvector_indexes_rls.py
+# and app.config.Settings.embedding_dimensions -- checked at startup in app.main.
+# This is a schema constant (fixed by the migration that created the column), not a
+# runtime setting, so it must not depend on Settings() -- that would require
+# DATABASE_URL/ADMIN_BOOTSTRAP_KEY just to import this module (e.g. in unit tests).
+EMBEDDING_DIMENSIONS = 1024
 
 
 class Chunk(Base):
@@ -31,11 +37,6 @@ class Chunk(Base):
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    # Dimension is fixed by the configured embedding provider at deploy time (see
-    # app.config.Settings.embedding_dimensions). Changing embedding provider/model
-    # dimension requires a migration + full re-embed, not a hot-swap.
-    embedding: Mapped[list[float]] = mapped_column(
-        Vector(get_settings().embedding_dimensions), nullable=False
-    )
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
     chunk_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
