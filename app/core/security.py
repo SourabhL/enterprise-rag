@@ -5,14 +5,13 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 from fastapi import Depends, Header
-from sqlalchemy import select, text, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import UnauthorizedError
 from app.core.tenancy import set_current_tenant_id
-from app.db.base import get_session_factory
 from app.db.models.api_key import ApiKey
-from app.db.session import get_raw_db
+from app.db.session import get_raw_db, tenant_session
 
 API_KEY_PREFIX_LEN = 8
 RAW_KEY_BYTES = 32
@@ -68,20 +67,9 @@ async def get_current_tenant_id_dep(
 async def get_tenant_db(
     tenant_id: uuid.UUID = Depends(get_current_tenant_id_dep),
 ) -> AsyncIterator[AsyncSession]:
-    """A DB session scoped to the authenticated tenant. Issues `SET LOCAL
-    app.tenant_id` so Postgres row-level-security policies enforce isolation as a
-    defense-in-depth layer, in addition to explicit `WHERE tenant_id = ...` filtering
-    that application code must still apply."""
-    factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            # SET LOCAL does not support bind parameters; set_config() does (the
-            # third arg `true` scopes it to the current transaction, same as LOCAL).
-            await session.execute(
-                text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
-                {"tenant_id": str(tenant_id)},
-            )
-            yield session
+    """A DB session scoped to the authenticated tenant (see app.db.session.tenant_session)."""
+    async with tenant_session(tenant_id) as session:
+        yield session
 
 
 def require_admin_key(x_admin_key: str = Header(..., alias="X-Admin-Key")) -> None:
