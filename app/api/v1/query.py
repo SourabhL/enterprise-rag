@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.core.rate_limit import rate_limit_dependency
 from app.core.security import get_current_tenant_id_dep, get_tenant_db
 from app.generation.service import build_rag_service
+from app.observability.metrics import record_llm_usage
 from app.retrieval.prompt import extract_citations
 
 router = APIRouter(prefix="/query", tags=["query"], dependencies=[Depends(rate_limit_dependency)])
@@ -58,6 +59,8 @@ async def query_stream(
 
         answer = "".join(parts)
         citations = extract_citations(answer, chunks)
+        if usage is not None:
+            record_llm_usage(tenant_id, usage)
         payload = {
             "citations": [
                 {"document_id": c.document_id, "chunk_id": c.chunk_id, "snippet": c.snippet}

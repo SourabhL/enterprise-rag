@@ -1,3 +1,4 @@
+import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -5,6 +6,12 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.observability.metrics import (
+    GENERATION_LATENCY,
+    RETRIEVAL_LATENCY,
+    record_llm_usage,
+    record_retrieval_quality,
+)
 from app.providers.base import LLMProvider, LLMStreamEvent, Message, Usage
 from app.providers.registry import get_embedding_provider, get_llm_provider
 from app.retrieval.prompt import SYSTEM_PROMPT, Citation, build_user_message, extract_citations
@@ -30,16 +37,23 @@ class RAGService:
         self._llm_provider = llm_provider
 
     async def _retrieve(self, tenant_id: uuid.UUID, query: str) -> list[ScoredChunk]:
+        start = time.monotonic()
         chunks = await self._retriever.retrieve(tenant_id, query)
-        return await self._reranker.rerank(query, chunks)
+        chunks = await self._reranker.rerank(query, chunks)
+        RETRIEVAL_LATENCY.observe(time.monotonic() - start)
+        record_retrieval_quality(chunks[0].score if chunks else None)
+        return chunks
 
     async def answer(self, tenant_id: uuid.UUID, query: str) -> RAGAnswer:
         chunks = await self._retrieve(tenant_id, query)
+        start = time.monotonic()
         response = await self._llm_provider.generate(
             system=SYSTEM_PROMPT,
             messages=[Message(role="user", content=build_user_message(query, chunks))],
             max_tokens=DEFAULT_MAX_TOKENS,
         )
+        GENERATION_LATENCY.observe(time.monotonic() - start)
+        record_llm_usage(tenant_id, response.usage)
         return RAGAnswer(
             answer=response.text,
             citations=extract_citations(response.text, chunks),

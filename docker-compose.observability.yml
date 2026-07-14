@@ -1,0 +1,11 @@
+# Optional local tracing stack. Not required for `make up` -- only start this if
+# you've set OTEL_EXPORTER_OTLP_ENDPOINT and want to see traces locally:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4318:4318" # OTLP HTTP receiver
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"

@@ -1,0 +1,17 @@
+# Sample golden Q&A fixture for the eval harness. Each example ingests its own
+# document into a scratch tenant, then runs the real retrieval+generation pipeline.
+- question: "What is the capital of France?"
+  document_filename: "geography.txt"
+  document_text: >
+    The capital of France is Paris. Paris is known for the Eiffel Tower and the
+    Louvre museum.
+  expected_facts:
+    - "Paris is the capital of France"
+
+- question: "What is the largest planet in the solar system?"
+  document_filename: "astronomy.txt"
+  document_text: >
+    Jupiter is the largest planet in the solar system. It is a gas giant with a
+    prominent storm called the Great Red Spot.
+  expected_facts:
+    - "Jupiter is the largest planet in the solar system"

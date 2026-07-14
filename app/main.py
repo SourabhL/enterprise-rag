@@ -9,6 +9,7 @@ from app.core.exceptions import register_exception_handlers
 from app.db.models.chunk import EMBEDDING_DIMENSIONS
 from app.logging_config import configure_logging
 from app.middleware import RequestContextMiddleware
+from app.observability.tracing import configure_tracing
 
 
 @asynccontextmanager
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     app.include_router(api_router)
     app.add_middleware(RequestContextMiddleware)
+    configure_tracing(app, get_settings())
     return app
 
 

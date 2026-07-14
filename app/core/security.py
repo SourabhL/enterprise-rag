@@ -4,6 +4,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
+import structlog
 from fastapi import Depends, Header
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +62,7 @@ async def get_current_tenant_id_dep(
     await db.commit()
 
     set_current_tenant_id(api_key.tenant_id)
+    structlog.contextvars.bind_contextvars(tenant_id=str(api_key.tenant_id))
     return api_key.tenant_id
 
 
