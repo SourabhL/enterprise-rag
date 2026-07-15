@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from app.config import Settings, get_settings
+from app.db.models.chunk import validate_embedding_dimensions
 from app.providers.base import EmbeddingProvider, LLMProvider
 from app.providers.embeddings.openai_provider import OpenAIEmbeddingProvider
 from app.providers.embeddings.voyage_provider import VoyageEmbeddingProvider
@@ -28,4 +29,10 @@ def get_llm_provider() -> LLMProvider:
 
 @lru_cache
 def get_embedding_provider() -> EmbeddingProvider:
-    return build_embedding_provider(get_settings())
+    # The API and worker also validate this at process startup (fail fast before
+    # serving any traffic) -- this call is the safety net for every other entrypoint
+    # (scripts, one-off tooling) that constructs an embedding provider without going
+    # through either startup hook.
+    settings = get_settings()
+    validate_embedding_dimensions(settings)
+    return build_embedding_provider(settings)

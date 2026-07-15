@@ -1,3 +1,5 @@
+import uuid
+
 import httpx
 
 from app.worker.tasks import ingest_document
@@ -37,6 +39,31 @@ async def test_ingest_retrieve_and_generate_with_citations(client: httpx.AsyncCl
     assert payload["answer"]
     assert len(payload["citations"]) == 1
     assert payload["citations"][0]["document_id"] == document_id
+
+
+async def test_ingest_document_skips_work_when_job_row_is_missing(
+    client: httpx.AsyncClient, tenant
+):
+    """A job_id with no corresponding IngestionJob row (e.g. a stale/duplicate arq
+    redelivery) must short-circuit before doing any ingestion work -- not silently
+    ingest the document anyway with nowhere to report status to."""
+    tenant_id, api_key = tenant
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    upload_resp = await client.post(
+        "/v1/documents",
+        headers=headers,
+        files={"file": ("orphaned.txt", b"some content", "text/plain")},
+    )
+    document_id = upload_resp.json()["document"]["id"]
+    bogus_job_id = str(uuid.uuid4())
+
+    await ingest_document({"job_try": 1}, tenant_id, document_id, bogus_job_id)
+
+    docs_resp = await client.get("/v1/documents", headers=headers)
+    docs = docs_resp.json()
+    assert docs[0]["status"] == "pending"
+    assert docs[0]["chunk_count"] == 0
 
 
 async def test_reupload_unchanged_content_is_skipped(client: httpx.AsyncClient, tenant):

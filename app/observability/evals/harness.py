@@ -3,9 +3,10 @@ import uuid
 from dataclasses import asdict, dataclass
 
 from app.config import Settings
+from app.db.base import session_scope
 from app.db.models.document import Document, DocumentStatus
 from app.db.models.tenant import Tenant
-from app.db.session import get_raw_db, tenant_session
+from app.db.session import tenant_session
 from app.generation.service import RAGService
 from app.ingestion.chunking import CHUNKING_CONFIG_VERSION
 from app.ingestion.hashing import content_hash
@@ -19,6 +20,12 @@ from app.retrieval.retriever import Retriever
 from app.vectorstore.factory import build_vector_store
 
 logger = get_logger(__name__)
+
+# Bounds how many golden examples run concurrently. Each example is fully isolated
+# (its own scratch tenant, session, and DB transaction), so running them concurrently
+# is safe -- this cap just avoids hammering the embedding/LLM providers with an
+# unbounded burst of concurrent requests on a large dataset.
+_MAX_CONCURRENT_EXAMPLES = 5
 
 
 @dataclass(frozen=True)
@@ -60,22 +67,25 @@ class EvalHarness:
 
     async def run(self, dataset: list[GoldenExample], dataset_name: str) -> dict:
         pipeline = IngestionPipeline(self._embedding_provider, self._settings)
-        results: list[ExampleResult] = []
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT_EXAMPLES)
 
-        for index, example in enumerate(dataset):
-            try:
-                scratch_tenant_id = await self._create_scratch_tenant(dataset_name, index)
-                results.append(await self._run_example(pipeline, scratch_tenant_id, example))
-            except Exception as exc:
-                # Each example runs in its own scratch tenant/transaction, so one
-                # example failing (e.g. a transient provider rate limit) can't
-                # corrupt or roll back the others -- record it and keep going
-                # rather than losing the whole batch's results to one bad example.
-                logger.warning(
-                    "eval_example_failed", dataset_name=dataset_name, index=index, error=str(exc)
-                )
-                results.append(
-                    ExampleResult(
+        async def run_one(index: int, example: GoldenExample) -> ExampleResult:
+            async with semaphore:
+                try:
+                    scratch_tenant_id = await self._create_scratch_tenant(dataset_name, index)
+                    return await self._run_example(pipeline, scratch_tenant_id, example)
+                except Exception as exc:
+                    # Each example runs in its own scratch tenant/transaction, so one
+                    # example failing (e.g. a transient provider rate limit) can't
+                    # corrupt or roll back the others -- record it and keep going
+                    # rather than losing the whole batch's results to one bad example.
+                    logger.warning(
+                        "eval_example_failed",
+                        dataset_name=dataset_name,
+                        index=index,
+                        error=str(exc),
+                    )
+                    return ExampleResult(
                         question=example.question,
                         answer=None,
                         retrieved_correct_document=False,
@@ -83,16 +93,19 @@ class EvalHarness:
                         relevance=0,
                         error=str(exc),
                     )
-                )
 
+        # gather preserves input order in its results regardless of completion order,
+        # so the summary's per-example ordering still matches the dataset's.
+        results = await asyncio.gather(
+            *(run_one(index, example) for index, example in enumerate(dataset))
+        )
         return _summarize(results)
 
     async def _create_scratch_tenant(self, dataset_name: str, index: int) -> uuid.UUID:
         tenant_id = uuid.uuid4()
-        async for db in get_raw_db():
+        async with session_scope() as db:
             db.add(Tenant(id=tenant_id, name=f"eval-scratch:{dataset_name}:{index}:{tenant_id}"))
             await db.commit()
-            break
         return tenant_id
 
     async def _run_example(
@@ -120,11 +133,14 @@ class EvalHarness:
                 self._settings.retrieval_top_k,
             )
             service = RAGService(retriever, NoOpReranker(), self._llm_provider)
-            rag_answer = await service.answer(tenant_id, example.question)
+            rag_answer = await service.answer(tenant_id, example.question, record_metrics=False)
             retrieved_correct = any(c.document_id == document.id for c in rag_answer.chunks)
 
             context = "\n\n".join(c.text for c in rag_answer.chunks)
-            groundedness, relevance = await asyncio.gather(
+            # return_exceptions=True so a failure in one judge call doesn't leave the
+            # other running as an orphaned, never-awaited task -- both are always
+            # awaited to completion, then the first exception (if any) is re-raised.
+            groundedness_result, relevance_result = await asyncio.gather(
                 score_groundedness(
                     self._llm_provider,
                     question=example.question,
@@ -134,7 +150,13 @@ class EvalHarness:
                 score_relevance(
                     self._llm_provider, question=example.question, answer=rag_answer.answer
                 ),
+                return_exceptions=True,
             )
+            if isinstance(groundedness_result, BaseException):
+                raise groundedness_result
+            if isinstance(relevance_result, BaseException):
+                raise relevance_result
+            groundedness, relevance = groundedness_result, relevance_result
 
             return ExampleResult(
                 question=example.question,

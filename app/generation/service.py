@@ -45,7 +45,9 @@ class RAGService:
         record_retrieval_quality(chunks[0].score if chunks else None)
         return chunks
 
-    async def answer(self, tenant_id: uuid.UUID, query: str) -> RAGAnswer:
+    async def answer(
+        self, tenant_id: uuid.UUID, query: str, *, record_metrics: bool = True
+    ) -> RAGAnswer:
         chunks = await self._retrieve(tenant_id, query)
         start = time.monotonic()
         response = await self._llm_provider.generate(
@@ -54,7 +56,13 @@ class RAGService:
             max_tokens=DEFAULT_MAX_TOKENS,
         )
         GENERATION_LATENCY.observe(time.monotonic() - start)
-        record_llm_usage(tenant_id, response.usage)
+        if record_metrics:
+            # The eval harness passes record_metrics=False -- it calls this once per
+            # golden example under a freshly minted scratch tenant_id, and tenant_id
+            # is a Prometheus label on the LLM usage counters. Recording those would
+            # add one new label value per example per eval run, growing the metric's
+            # cardinality without bound across repeated runs.
+            record_llm_usage(tenant_id, response.usage)
         return RAGAnswer(
             answer=response.text,
             citations=extract_citations(response.text, chunks),
