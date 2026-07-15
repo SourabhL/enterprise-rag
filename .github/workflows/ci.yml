@@ -19,7 +19,7 @@ jobs:
       - run: uv run mypy app
       - run: uv run pytest tests/unit -v
 
-  migration-check:
+  migration-and-integration-check:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -35,10 +35,24 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       MIGRATOR_DATABASE_URL: postgresql+asyncpg://rag:rag@localhost:5432/rag
       DATABASE_URL: postgresql+asyncpg://rag_app:rag_app@localhost:5432/rag
+      REDIS_URL: redis://localhost:6379/0
       ADMIN_BOOTSTRAP_KEY: ci-admin-key
+      LLM_PROVIDER: anthropic
+      EMBEDDING_PROVIDER: voyage
+      ANTHROPIC_API_KEY: sk-ant-ci-placeholder
+      VOYAGE_API_KEY: pa-ci-placeholder
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
@@ -56,6 +70,7 @@ jobs:
         run: |
           ! PGPASSWORD=rag_app psql -h localhost -U rag_app -d rag -c \
             "INSERT INTO documents (id, tenant_id, source_identifier, filename, content_type, content_hash, chunking_config_version, raw_content) VALUES (gen_random_uuid(), gen_random_uuid(), 'x', 'x', 'text/plain', 'h', 'v1', 'x');"
+      - run: uv run pytest tests/integration -v
 
   docker-build:
     runs-on: ubuntu-latest

@@ -42,7 +42,13 @@ class Document(Base):
     chunking_config_version: Mapped[str] = mapped_column(String(32), nullable=False)
     raw_content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     status: Mapped[DocumentStatus] = mapped_column(
-        Enum(DocumentStatus, name="document_status"), nullable=False, default=DocumentStatus.PENDING
+        Enum(
+            DocumentStatus,
+            name="document_status",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+        default=DocumentStatus.PENDING,
     )
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

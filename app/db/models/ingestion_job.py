@@ -30,7 +30,11 @@ class IngestionJob(Base):
         index=True,
     )
     status: Mapped[IngestionJobStatus] = mapped_column(
-        Enum(IngestionJobStatus, name="ingestion_job_status"),
+        Enum(
+            IngestionJobStatus,
+            name="ingestion_job_status",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
         default=IngestionJobStatus.PENDING,
     )
