@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from app.api.router import api_router
 from app.config import get_settings
 from app.core.exceptions import register_exception_handlers
-from app.db.models.chunk import EMBEDDING_DIMENSIONS
+from app.db.models.chunk import validate_embedding_dimensions
 from app.logging_config import configure_logging
 from app.middleware import RequestContextMiddleware
 from app.observability.tracing import configure_tracing
@@ -16,13 +16,7 @@ from app.observability.tracing import configure_tracing
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     settings.require_provider_keys()
-    if settings.embedding_dimensions != EMBEDDING_DIMENSIONS:
-        raise ValueError(
-            f"Configured embedding provider produces {settings.embedding_dimensions}-dim "
-            f"vectors but the chunks.embedding column is {EMBEDDING_DIMENSIONS}-dim "
-            "(app.db.models.chunk.EMBEDDING_DIMENSIONS). Changing embedding "
-            "provider/model dimension requires a new migration and a full re-embed."
-        )
+    validate_embedding_dimensions(settings)
     configure_logging()
     yield
 

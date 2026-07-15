@@ -28,6 +28,7 @@ class RAGAnswer:
     answer: str
     citations: list[Citation]
     usage: Usage
+    chunks: list[ScoredChunk]
 
 
 class RAGService:
@@ -58,6 +59,7 @@ class RAGService:
             answer=response.text,
             citations=extract_citations(response.text, chunks),
             usage=response.usage,
+            chunks=chunks,
         )
 
     async def answer_stream(

@@ -29,7 +29,11 @@ class RequestContextMiddleware:
 
         async def send_with_request_id(message: Message) -> None:
             if message["type"] == "http.response.start":
-                headers = list(message.get("headers", []))
+                # Drop any existing x-request-id so downstream code can never cause
+                # a duplicate header -- exactly one x-request-id, always ours.
+                headers = [
+                    (k, v) for k, v in message.get("headers", []) if k.lower() != b"x-request-id"
+                ]
                 headers.append((b"x-request-id", request_id.encode()))
                 message = {**message, "headers": headers}
             await send(message)

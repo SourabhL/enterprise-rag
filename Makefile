@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate seed test lint fmt eval
+.PHONY: up down logs migrate seed test test-integration lint fmt eval
 
 up:
 	docker compose up -d --build
@@ -19,7 +19,10 @@ seed:
 	docker compose run --rm api python scripts/seed_dev_data.py
 
 test:
-	uv run pytest
+	uv run pytest tests/unit
+
+test-integration:
+	uv run pytest tests/integration
 
 lint:
 	uv run ruff check .

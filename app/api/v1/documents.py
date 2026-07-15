@@ -27,7 +27,7 @@ async def _enqueue_ingestion(
         str(tenant_id),
         str(document_id),
         str(job_id),
-        _job_id=ingestion_job_id(document_id, hash_),
+        _job_id=ingestion_job_id(document_id, hash_, CHUNKING_CONFIG_VERSION),
     )
 
 
@@ -68,6 +68,10 @@ async def upload_document(
         existing.content_type = content_type
         existing.chunking_config_version = CHUNKING_CONFIG_VERSION
         existing.status = DocumentStatus.PENDING
+        # Stale until re-ingestion completes -- otherwise a client polling GET
+        # /v1/documents mid-re-ingestion sees status=pending with the *previous*
+        # version's chunk_count, which reads as "still queryable" when it isn't.
+        existing.chunk_count = 0
         document = existing
     else:
         document = Document(

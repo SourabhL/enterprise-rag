@@ -8,10 +8,16 @@ from httpx import ASGITransport
 import app.core.rate_limit as rate_limit_module
 import app.db.base as db_base
 import app.worker.queue as worker_queue
+from app.config import get_settings
 from app.main import app
 from app.providers.base import LLMResponse, LLMStreamEvent, Message, Usage
 
-ADMIN_KEY = "changeme-root-key"
+
+def _clear_singletons() -> None:
+    db_base._engine = None
+    db_base._session_factory = None
+    worker_queue._pool = None
+    rate_limit_module._redis = None
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -22,17 +28,13 @@ async def reset_async_singletons():
     test A's loop breaks on first use in test B ("attached to a different loop").
     Reset them before/after every test so each test creates its own, bound to its
     own loop."""
-    db_base._engine = None
-    db_base._session_factory = None
-    worker_queue._pool = None
-    rate_limit_module._redis = None
+    _clear_singletons()
     yield
+    # Dispose whatever engine *this* test created (not what existed before it --
+    # _clear_singletons() above already dropped that reference).
     if db_base._engine is not None:
         await db_base._engine.dispose()
-    db_base._engine = None
-    db_base._session_factory = None
-    worker_queue._pool = None
-    rate_limit_module._redis = None
+    _clear_singletons()
 
 
 class FakeEmbeddingProvider:
@@ -57,7 +59,14 @@ class FakeLLMProvider:
     async def generate(
         self, *, system: str, messages: list[Message], max_tokens: int, effort: str = "high"
     ) -> LLMResponse:
-        text = "Based on [S1], the answer is derived from the retrieved context."
+        # The eval judge (app.observability.evals.scorers) sends a distinct system
+        # prompt asking for a "SCORE: <1-5>" line; a real judge model would follow
+        # that instruction, so the fake needs to as well or every eval score comes
+        # back as the "unparseable response" 0 rather than exercising real scoring.
+        if "SCORE:" in system:
+            text = "SCORE: 4\nRationale: looks reasonable."
+        else:
+            text = "Based on [S1], the answer is derived from the retrieved context."
         return LLMResponse(text=text, usage=Usage(input_tokens=50, output_tokens=20))
 
     async def stream(self, *, system: str, messages: list[Message], max_tokens: int):
@@ -78,11 +87,13 @@ def patch_providers(monkeypatch):
         "app.providers.registry.get_embedding_provider",
         "app.worker.tasks.get_embedding_provider",
         "app.generation.service.get_embedding_provider",
+        "app.api.v1.evals.get_embedding_provider",
     ):
         monkeypatch.setattr(target, lambda: FakeEmbeddingProvider())
     for target in (
         "app.providers.registry.get_llm_provider",
         "app.generation.service.get_llm_provider",
+        "app.api.v1.evals.get_llm_provider",
     ):
         monkeypatch.setattr(target, lambda: FakeLLMProvider())
 
@@ -95,10 +106,14 @@ async def client():
 
 
 async def create_tenant_and_key(client: httpx.AsyncClient) -> tuple[str, str]:
+    # Read from settings (env-driven) rather than a hardcoded literal -- CI and local
+    # dev set ADMIN_BOOTSTRAP_KEY to different values, and a literal here silently
+    # drifts out of sync with whatever the running app actually expects.
+    admin_key = get_settings().admin_bootstrap_key
     tenant_resp = await client.post(
         "/v1/admin/tenants",
         json={"name": f"test-tenant-{uuid.uuid4()}"},
-        headers={"X-Admin-Key": ADMIN_KEY},
+        headers={"X-Admin-Key": admin_key},
     )
     tenant_resp.raise_for_status()
     tenant_id = tenant_resp.json()["id"]
@@ -106,7 +121,7 @@ async def create_tenant_and_key(client: httpx.AsyncClient) -> tuple[str, str]:
     key_resp = await client.post(
         "/v1/admin/api-keys",
         json={"tenant_id": tenant_id},
-        headers={"X-Admin-Key": ADMIN_KEY},
+        headers={"X-Admin-Key": admin_key},
     )
     key_resp.raise_for_status()
     return tenant_id, key_resp.json()["api_key"]

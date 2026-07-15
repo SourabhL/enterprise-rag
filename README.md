@@ -105,6 +105,6 @@ Anthropic/Voyage), and needs `DATABASE_URL`, `MIGRATOR_DATABASE_URL`, `REDIS_URL
 against service containers, or point them at your local `make up` stack:
 
 ```bash
-uv run pytest tests/unit           # no setup needed
-uv run pytest tests/integration    # needs Postgres + Redis reachable, see above
+make test              # tests/unit -- no setup needed
+make test-integration  # tests/integration -- needs Postgres + Redis reachable, see above
 ```

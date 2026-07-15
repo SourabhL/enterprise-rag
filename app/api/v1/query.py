@@ -10,9 +10,25 @@ from app.core.rate_limit import rate_limit_dependency
 from app.core.security import get_current_tenant_id_dep, get_tenant_db
 from app.generation.service import build_rag_service
 from app.observability.metrics import record_llm_usage
-from app.retrieval.prompt import extract_citations
+from app.providers.base import Usage
+from app.retrieval.prompt import Citation, extract_citations
 
 router = APIRouter(prefix="/query", tags=["query"], dependencies=[Depends(rate_limit_dependency)])
+
+
+def _citation_response(citation: Citation) -> CitationResponse:
+    return CitationResponse(
+        document_id=citation.document_id, chunk_id=citation.chunk_id, snippet=citation.snippet
+    )
+
+
+def _usage_response(usage: Usage) -> UsageResponse:
+    return UsageResponse(
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cache_read_input_tokens=usage.cache_read_input_tokens,
+        cache_creation_input_tokens=usage.cache_creation_input_tokens,
+    )
 
 
 @router.post("", response_model=QueryResponse)
@@ -25,16 +41,8 @@ async def query(
     result = await service.answer(tenant_id, body.query)
     return QueryResponse(
         answer=result.answer,
-        citations=[
-            CitationResponse(document_id=c.document_id, chunk_id=c.chunk_id, snippet=c.snippet)
-            for c in result.citations
-        ],
-        usage=UsageResponse(
-            input_tokens=result.usage.input_tokens,
-            output_tokens=result.usage.output_tokens,
-            cache_read_input_tokens=result.usage.cache_read_input_tokens,
-            cache_creation_input_tokens=result.usage.cache_creation_input_tokens,
-        ),
+        citations=[_citation_response(c) for c in result.citations],
+        usage=_usage_response(result.usage),
     )
 
 
@@ -62,19 +70,9 @@ async def query_stream(
         if usage is not None:
             record_llm_usage(tenant_id, usage)
         payload = {
-            "citations": [
-                {"document_id": c.document_id, "chunk_id": c.chunk_id, "snippet": c.snippet}
-                for c in citations
-            ],
-            "usage": {
-                "input_tokens": usage.input_tokens,
-                "output_tokens": usage.output_tokens,
-                "cache_read_input_tokens": usage.cache_read_input_tokens,
-                "cache_creation_input_tokens": usage.cache_creation_input_tokens,
-            }
-            if usage
-            else None,
+            "citations": [_citation_response(c).model_dump(mode="json") for c in citations],
+            "usage": _usage_response(usage).model_dump(mode="json") if usage else None,
         }
-        yield f"event: done\ndata: {json.dumps(payload, default=str)}\n\n"
+        yield f"event: done\ndata: {json.dumps(payload)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

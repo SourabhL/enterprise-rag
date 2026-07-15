@@ -1,7 +1,10 @@
 import re
 from dataclasses import dataclass
 
+from app.logging_config import get_logger
 from app.providers.base import LLMProvider, Message
+
+logger = get_logger(__name__)
 
 _SCORE_PATTERN = re.compile(r"SCORE:\s*(\d)")
 
@@ -35,7 +38,10 @@ async def _judge(llm_provider: LLMProvider, system: str, user: str) -> JudgeScor
         effort="low",
     )
     match = _SCORE_PATTERN.search(response.text)
-    return JudgeScore(score=int(match.group(1)) if match else 0, rationale=response.text)
+    if match is None:
+        logger.warning("judge_score_unparseable", response_text=response.text[:500])
+        return JudgeScore(score=0, rationale=f"[unparseable judge response] {response.text}")
+    return JudgeScore(score=int(match.group(1)), rationale=response.text)
 
 
 async def score_groundedness(

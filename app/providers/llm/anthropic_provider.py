@@ -30,6 +30,14 @@ class AnthropicLLMProvider:
     def _build_system(self, system: str) -> list[TextBlockParam]:
         return [{"type": "text", "text": system, "cache_control": _CACHE_CONTROL}]
 
+    def _usage_from(self, sdk_usage: anthropic.types.Usage) -> Usage:
+        return Usage(
+            input_tokens=sdk_usage.input_tokens,
+            output_tokens=sdk_usage.output_tokens,
+            cache_read_input_tokens=sdk_usage.cache_read_input_tokens or 0,
+            cache_creation_input_tokens=sdk_usage.cache_creation_input_tokens or 0,
+        )
+
     async def generate(
         self,
         *,
@@ -57,12 +65,7 @@ class AnthropicLLMProvider:
         text = next((block.text for block in response.content if block.type == "text"), "")
         return LLMResponse(
             text=text,
-            usage=Usage(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
-                cache_read_input_tokens=response.usage.cache_read_input_tokens or 0,
-                cache_creation_input_tokens=response.usage.cache_creation_input_tokens or 0,
-            ),
+            usage=self._usage_from(response.usage),
             stop_reason=response.stop_reason,
         )
 
@@ -87,12 +90,7 @@ class AnthropicLLMProvider:
                 yield LLMStreamEvent(
                     delta="",
                     is_final=True,
-                    usage=Usage(
-                        input_tokens=final.usage.input_tokens,
-                        output_tokens=final.usage.output_tokens,
-                        cache_read_input_tokens=final.usage.cache_read_input_tokens or 0,
-                        cache_creation_input_tokens=final.usage.cache_creation_input_tokens or 0,
-                    ),
+                    usage=self._usage_from(final.usage),
                 )
         except anthropic.RateLimitError as e:
             raise ProviderError(f"Anthropic rate limit exceeded: {e}") from e

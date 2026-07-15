@@ -30,12 +30,17 @@ async def run_eval(
         )
         for e in body.examples
     ]
+    # EvalHarness ingests each example's document into its own scratch tenant --
+    # never the caller's tenant -- so eval fixture content can never leak into the
+    # caller's live retrieval corpus. Only the resulting summary (no document
+    # content) is persisted here, under the caller's own tenant.
     harness = EvalHarness(get_settings(), get_embedding_provider(), get_llm_provider())
-    eval_run_id, _ = await harness.run(dataset, tenant_id, dataset_name=body.dataset_name)
+    summary = await harness.run(dataset, dataset_name=body.dataset_name)
 
-    eval_run = await db.get(EvalRun, eval_run_id)
-    if eval_run is None:
-        raise NotFoundError(f"Eval run {eval_run_id} not found")
+    eval_run = EvalRun(tenant_id=tenant_id, dataset_name=body.dataset_name, results=summary)
+    db.add(eval_run)
+    await db.flush()
+    await db.refresh(eval_run)
     return eval_run
 
 
